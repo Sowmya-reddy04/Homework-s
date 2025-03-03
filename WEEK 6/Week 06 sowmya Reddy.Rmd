@@ -1,0 +1,122 @@
+---
+title: "Week 6 Assignment"
+author: "Sowmya Uppaluru"
+date: "2025-03-02"
+output: html_document
+---
+
+```{r}
+library(dplyr)
+library(data.table)
+library(geosphere)
+library(GA)
+library(purrr)
+library(sf)
+
+## Load the population data
+pop.data <- data.table::fread("C:/Users/sowmy/Downloads/Mo_pop_Sim/Mo_pop_Sim.csv")
+str(pop.data)
+frac <- 0.0001
+small.data <- pop.data[sample(1:nrow(pop.data),
+                               size = round(nrow(pop.data) * frac),
+                               replace = F), ## extract a sample of randomlychosen 1% rows
+                        ]  ## and choose all columns
+
+## Load the FQHC data
+data_path <- 'MO_2018_Federally_Qualified_Health_Center_Locations'
+fqhc.data <- data.table(as.data.frame(st_read("C:/Users/sowmy/Downloads/MO_2018_Federally_Qualified_Health_Center_Locations/MO_2018_Federally_Qualified_Health_Center_Locations",
+                     'MO_2018_Federally_Qualified_Health_Center_Locations')))
+```
+
+
+Calculate Average Distance to Residences
+
+```{r}
+calculate_average_distance <- function(fqhc, residences) {
+  distances <- distHaversine(c(fqhc$Longitude, fqhc$Latitude), 
+                              residences[, .(long, lat)])
+  return(mean(distances))
+}
+
+fqhc.data <- fqhc.data %>%
+  rowwise() %>%
+  mutate(avg_distance = calculate_average_distance(cur_data(), small.data))
+
+fqhc.data %>% select(Facility, avg_distance) %>% arrange(avg_distance)
+```
+
+
+Calculate Density of Residences within a 30-mile Radius
+```{r}
+calculate_residence_density <- function(fqhc, residences, radius_miles = 30) {
+  radius_meters <- radius_miles * 1609.34  # Convert miles to meters
+  distances <- distHaversine(c(fqhc$Longitude, fqhc$Latitude), 
+                              residences[, .(long, lat)])
+  return(sum(distances <= radius_meters))
+}
+
+fqhc.data <- fqhc.data %>%
+  rowwise() %>%
+  mutate(residence_density = calculate_residence_density(cur_data(), small.data))
+
+fqhc.data %>% select(Facility, residence_density) %>% arrange(desc(residence_density))
+```
+
+```{r}
+top_fqhc <- fqhc.data %>%
+  arrange(avg_distance) %>%  
+  slice_head(n = 8)          
+top_fqhc %>% select(Facility, avg_distance, residence_density)
+```
+
+```{r}
+
+# Define the fitness function
+fitness_function <- function(indices) {
+  selected_fqhc <- fqhc.data[indices, ]
+  avg_distance_score <- mean(selected_fqhc$avg_distance)
+  density_score <- sum(selected_fqhc$residence_density)
+  
+  # The goal is to maximize density and minimize average distance
+  fitness_value <- density_score / avg_distance_score
+  return(fitness_value)
+}
+
+# Set GA parameters
+num_facilities <- 8
+num_fqhc <- nrow(fqhc.data)
+
+# Run Genetic Algorithm
+result <- ga(
+  type = "permutation", 
+  fitness = function(x) fitness_function(x),
+  lower = 1, upper = num_fqhc,
+  popSize = 50,
+  maxiter = 100, 
+  run = 10, 
+  parallel = FALSE,
+  seed = 123
+)
+
+# Get the best solution
+best_indices <- result@solution[1, ]
+best_fqhc <- fqhc.data[best_indices, ]
+
+# Display selected FQHC locations
+data.table::fwrite(best_fqhc, "selected_FQHCs.csv")
+print(best_fqhc)
+```
+
+
+
+The assessment of relative location fitness for specialized mental health services remains essential because it ensures access for all people who need these services. The evaluation of location fitness consists of three main elements: accessibility, population density and healthcare infrastructure in place. This paper demonstrates an evaluation system for these factors.
+
+Accessibility stands as the main factor for evaluating the suitability of locations for mental health service delivery. The service accessibility measurement requires calculating how far people must physically travel before reaching the mental health facility. Locations which minimize the physical distance to patients tend to become more beneficial because they increase utilization rates. The short distance connection between residential areas with high population density and mental health facilities increases the number of clients who seek treatment. Increasing travel distance should not be a focus when developing the fitness function.
+
+The key element of population density plays an essential role in healthcare service delivery. Areas having elevated population concentrations tend to demand a greater number of mental health services. Statistical assessment of population numbers reveals specific areas where mental health conditions affect large segments of the population. A fitness function needs to include a metric which should aim to determine the highest number of prospective clients located within a defined radius of the service area. The method presupposes that more residents in an area leads to greater mental health care requirements.
+
+Healthcare infrastructure available at present decides significantly the capacity of suitable locations to serve as mental health service providers. Service delivery systems benefit when medical facilities are already set up in the same geographical area because it creates an improved total service quality. A mental health service placed near primary care providers enables integrated care as well as referral functions which leads to superior patient results. The design of the fitness function should evaluate nearness to healthcare facilities to maximize potential cooperation initiatives.
+
+The evaluation of suitable locations for special mental health services requires implementing a complex multi-step assessment process. A comprehensive fitness function develops through analysis of accessibility along with measurement of population density and existing healthcare infrastructure. The evaluation system seeks to achieve the shortest distance between service locations while maintaining the highest possible number of clients and optimal contact with supplemental health facilities. This method guarantees that people have both access to mental health services and receive support that matches their community requirements.
+
+
